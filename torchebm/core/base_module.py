@@ -14,7 +14,7 @@ provided here as a thin compatibility shim. They will move to a dedicated
 """
 
 from contextlib import nullcontext
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 import warnings
 
 import torch
@@ -68,20 +68,28 @@ def _unexpected_init_args_message(cls, args, kwargs, stop_at: type) -> str:
     )
 
 
-def substitute_condition(y, mask, null) -> torch.Tensor:
+def substitute_condition(
+    y: torch.Tensor,
+    mask: torch.Tensor,
+    null: Union[
+        int,
+        float,
+        torch.Tensor,
+        Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    ],
+) -> torch.Tensor:
     r"""Replace conditioning rows selected by `mask` with the null condition.
 
     Shared semantics for classifier-free-guidance label dropout (losses) and
     the guidance wrapper's unconditional half (sampling).
 
     Args:
-        y (torch.Tensor): Conditioning tensor of shape (batch_size, ...).
-        mask (torch.Tensor): Bool tensor of shape (batch_size,); True rows become
-            null.
-        null (Union[int, float, torch.Tensor, Callable]): Null condition: an
-            int/float filled into y's dtype (the ``num_classes`` label
-            convention), a tensor broadcast over y's non-batch dims (e.g. a
-            zero or learned null embedding), or a callable ``(y, mask) -> y``.
+        y: Conditioning tensor of shape (batch_size, ...).
+        mask: Bool tensor of shape (batch_size,); True rows become null.
+        null: Null condition: an int/float filled into y's dtype (the
+            ``num_classes`` label convention), a tensor broadcast over y's
+            non-batch dims (e.g. a zero or learned null embedding), or a
+            callable ``(y, mask) -> y``.
 
     Returns:
         torch.Tensor: Tensor of y's shape with masked rows nulled.

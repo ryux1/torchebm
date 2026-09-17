@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from abc import abstractmethod
 
-from torchebm.core import BaseContrastiveDivergence
+from torchebm.core import BaseContrastiveDivergence, BaseSampler
 from torchebm._deprecation import declare_deprecation
 
 # First warned in v0.7.5; window restarted when the deprecation ledger was
@@ -34,20 +34,20 @@ class ContrastiveDivergence(BaseContrastiveDivergence):
     for `k_steps` to generate negative samples.
 
     Args:
-        model (nn.Module): The energy-based model to train.
-        sampler (BaseSampler): The MCMC sampler for generating negative samples.
-        k_steps (int): The number of MCMC steps (k in CD-k).
-        persistent (bool): If True, uses Persistent CD with a replay buffer.
-        buffer_size (int): Size of the replay buffer for PCD.
-        init_steps (int): Number of MCMC steps to warm up the buffer.
-        new_sample_ratio (float): Fraction of new random samples for PCD chains.
-        energy_reg_weight (float): Weight for energy regularization term.
-        add_noise_to_real (bool): Whether to perturb positive samples before
+        model: The energy-based model to train.
+        sampler: The MCMC sampler for generating negative samples.
+        k_steps: The number of MCMC steps (k in CD-k).
+        persistent: If True, uses Persistent CD with a replay buffer.
+        buffer_size: Size of the replay buffer for PCD.
+        init_steps: Number of MCMC steps to warm up the buffer.
+        new_sample_ratio: Fraction of new random samples for PCD chains.
+        energy_reg_weight: Weight for energy regularization term.
+        add_noise_to_real: Whether to perturb positive samples before
             evaluating their energy.
-        noise_scale (float): Standard deviation of the optional positive-sample
+        noise_scale: Standard deviation of the optional positive-sample
             perturbation.
-        dtype (torch.dtype): Data type for computations.
-        device (Union[str, torch.device]): Device for computations.
+        dtype: Data type for computations.
+        device: Device for computations.
 
     Example:
         ```python
@@ -65,21 +65,21 @@ class ContrastiveDivergence(BaseContrastiveDivergence):
 
     def __init__(
         self,
-        model,
-        sampler,
-        k_steps=10,
-        persistent=False,
-        buffer_size=10000,
-        init_steps=100,
-        new_sample_ratio=0.05,
-        energy_reg_weight=0.001,
-        add_noise_to_real=False,
-        noise_scale=1e-4,
-        dtype=torch.float32,
-        device=torch.device("cpu"),
+        model: nn.Module,
+        sampler: BaseSampler,
+        k_steps: int = 10,
+        persistent: bool = False,
+        buffer_size: int = 10000,
+        init_steps: int = 100,
+        new_sample_ratio: float = 0.05,
+        energy_reg_weight: float = 0.001,
+        add_noise_to_real: bool = False,
+        noise_scale: float = 1e-4,
+        dtype: torch.dtype = torch.float32,
+        device: Union[str, torch.device] = torch.device("cpu"),
         *args,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(
             model=model,
             sampler=sampler,
@@ -113,7 +113,7 @@ class ContrastiveDivergence(BaseContrastiveDivergence):
 
         Args:
             x (torch.Tensor): A batch of real data samples (positive samples).
-            *args (Any): Additional positional arguments.
+            *args: Additional positional arguments.
             y (Optional[torch.Tensor]): Optional conditioning tensor forwarded
                 to the model on both positive and negative paths; shorthand for
                 ``model_kwargs={'y': y}``.
@@ -125,7 +125,7 @@ class ContrastiveDivergence(BaseContrastiveDivergence):
                 optional real-data noise; the global RNG when ``None``. In
                 distributed runs, a per-rank generator keeps the negative chains
                 of each rank independent.
-            **kwargs (Any): Deprecated. The loss options ``energy_reg_weight``,
+            **kwargs: Deprecated. The loss options ``energy_reg_weight``,
                 ``add_noise_to_real`` and ``noise_scale`` are now constructor
                 parameters; passing them here still works for one release but
                 emits a ``DeprecationWarning``.
@@ -195,10 +195,10 @@ class ContrastiveDivergence(BaseContrastiveDivergence):
         Args:
             x (torch.Tensor): Real data samples (positive samples).
             pred_x (torch.Tensor): Generated negative samples.
-            *args (Any): Additional positional arguments.
+            *args: Additional positional arguments.
             generator: RNG for the optional real-data noise; the global RNG
                 when `None`.
-            **kwargs (Any): Additional keyword arguments.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             torch.Tensor: The scalar loss value.

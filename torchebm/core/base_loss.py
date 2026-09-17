@@ -5,7 +5,7 @@ Base Loss Classes for Energy-Based Models
 import logging
 import warnings
 from abc import abstractmethod, ABC
-from typing import Tuple, Union, Optional, Dict, Any, Callable
+from typing import Tuple, Union, Optional, Dict, Any, Callable, TYPE_CHECKING
 
 import torch
 from torch import nn
@@ -20,6 +20,10 @@ from torchebm.core.base_module import (
     _unexpected_init_args_message,
     substitute_condition,
 )
+
+if TYPE_CHECKING:
+    from torchebm.core.base_coupling import BaseCoupling
+    from torchebm.core.base_interpolant import BaseInterpolant
 
 # First warned in v0.7.5; window restarted when the deprecation ledger was
 # adopted.
@@ -270,8 +274,8 @@ class BaseLoss(Schedulable, TorchEBMModule, ABC):
 
         Args:
             x (torch.Tensor): Input data tensor from the target distribution.
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             torch.Tensor: The computed scalar loss value.
@@ -302,10 +306,10 @@ class BaseInterpolantLoss(BaseLoss):
     signature may change as more losses adopt it.
 
     Args:
-        interpolant (Union[str, BaseInterpolant]): Interpolant name (e.g.
-            'linear', 'cosine', 'vp') or BaseInterpolant instance.
-        coupling (Optional[Union[str, BaseCoupling]]): Minibatch coupling name
-            or BaseCoupling instance; ``None`` uses the subclass default.
+        interpolant: Interpolant name (e.g. 'linear', 'cosine', 'vp') or
+            BaseInterpolant instance.
+        coupling: Minibatch coupling name or BaseCoupling instance; ``None``
+            uses the subclass default.
         train_eps: Epsilon for training time interval stability. Float or
             `BaseScheduler`.
         t_sampler: Training-time distribution:
@@ -329,8 +333,8 @@ class BaseInterpolantLoss(BaseLoss):
 
     def __init__(
         self,
-        interpolant="linear",
-        coupling=None,
+        interpolant: Union[str, "BaseInterpolant"] = "linear",
+        coupling: Optional[Union[str, "BaseCoupling"]] = None,
         train_eps: Union[float, "BaseScheduler"] = 0.0,
         t_sampler: Union[str, Callable[..., torch.Tensor]] = "uniform",
         t_p_mean: float = -1.2,
@@ -394,10 +398,10 @@ class BaseInterpolantLoss(BaseLoss):
 
         Args:
             x: Data samples of shape (batch_size, ...).
-            *args (Any): Additional positional arguments.
+            *args: Additional positional arguments.
             x0: Optional source samples of shape (batch_size, ...).
             model_kwargs: Conditioning arguments forwarded to the model.
-            **kwargs (Any): Deprecated bare model kwargs.
+            **kwargs: Deprecated bare model kwargs.
 
         Returns:
             Scalar loss value.
@@ -679,7 +683,7 @@ class BaseContrastiveDivergence(BaseLoss):
         Gets negative samples using the replay buffer strategy.
 
         Args:
-            x (torch.Tensor): (Unused) The input data tensor.
+            x: (Unused) The input data tensor.
             batch_size (int): The number of samples to generate.
             data_shape (Tuple[int, ...]): The shape of the data samples (excluding batch size).
             generator: RNG for the noise and buffer index draws; the global RNG
@@ -848,8 +852,8 @@ class BaseContrastiveDivergence(BaseLoss):
         Args:
             x (torch.Tensor): Real data samples (positive samples).
             pred_x (torch.Tensor): Generated negative samples.
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             torch.Tensor: The contrastive divergence loss.
@@ -1168,8 +1172,8 @@ class BaseScoreMatching(BaseLoss):
 
         Args:
             x (torch.Tensor): Input data tensor.
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             torch.Tensor: The computed score matching loss.
@@ -1183,8 +1187,8 @@ class BaseScoreMatching(BaseLoss):
 
         Args:
             x (torch.Tensor): Input data tensor.
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             torch.Tensor: The specific score matching loss.
