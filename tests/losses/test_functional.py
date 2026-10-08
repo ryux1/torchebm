@@ -9,7 +9,9 @@ from torch import nn
 
 from torchebm.core import BaseCoupling, CouplingResult
 from torchebm.losses import (
+    EquilibriumMatchingLoss,
     FlowMatchingLoss,
+    prepare_equilibrium_matching,
     prepare_flow_matching,
     weighted_mse_loss,
 )
@@ -108,6 +110,81 @@ def test_external_flow_evaluation_matches_class_value_and_gradients():
         assert torch.equal(class_param.grad, external_param.grad)
 
 
+@pytest.mark.parametrize("time_invariant", [True, False])
+def test_prepare_equilibrium_matching_scales_target_and_sets_model_clock(
+    time_invariant,
+):
+    x1 = torch.arange(12, dtype=torch.float64).reshape(4, 3)
+    x0 = torch.flip(x1, dims=(0,)) + 0.5
+    t = torch.tensor([0.1, 0.3, 0.6, 0.9], dtype=torch.float64)
+    coupling = WeightedReverseCoupling()
+    interpolant = get_interpolant("linear")
+
+    batch = prepare_equilibrium_matching(
+        x1,
+        interpolant=interpolant,
+        coupling=coupling,
+        ct=lambda value: 2.0 * (1.0 - value),
+        time_invariant=time_invariant,
+        x0=x0,
+        t=t,
+    )
+
+    coupled = coupling(x0, x1)
+    expected_xt, velocity = interpolant.interpolate(coupled.x0, coupled.x1, t)
+    expected_target = -velocity * (2.0 * (1.0 - t)).unsqueeze(-1)
+    assert torch.equal(batch.xt, expected_xt)
+    assert torch.equal(batch.target, expected_target)
+    assert torch.equal(batch.weights, coupled.weights)
+    assert torch.equal(batch.model_time, torch.zeros_like(t) if time_invariant else t)
+
+
+@pytest.mark.parametrize("ct", ["constant", "linear", "truncated"])
+def test_external_equilibrium_evaluation_matches_class_value_and_gradients(ct):
+    torch.manual_seed(11)
+    x1 = torch.randn(4, 3)
+    x0 = torch.randn(4, 3)
+    t = torch.tensor([0.1, 0.3, 0.6, 0.9])
+    coupling = WeightedReverseCoupling()
+    model = TimeField(dim=3)
+    external_model = copy.deepcopy(model)
+    loss_weight = lambda value: value + 0.25
+    loss_fn = EquilibriumMatchingLoss(
+        model=model,
+        coupling=coupling,
+        t_sampler=_fixed_t(t),
+        ct=ct,
+        ct_threshold=0.6,
+        ct_multiplier=1.7,
+        loss_weight_fn=loss_weight,
+    )
+
+    class_loss = loss_fn(x1, x0=x0)
+    batch = prepare_equilibrium_matching(
+        x1,
+        interpolant=get_interpolant("linear"),
+        coupling=coupling,
+        ct=loss_fn._compute_ct,
+        x0=x0,
+        t=t,
+    )
+    prediction = external_model(batch.xt, batch.model_time)
+    external_loss = weighted_mse_loss(
+        prediction,
+        batch.target,
+        weights=batch.weights,
+        loss_weights=loss_weight(batch.t),
+    )
+
+    assert torch.equal(class_loss, external_loss)
+    class_loss.backward()
+    external_loss.backward()
+    for class_param, external_param in zip(
+        model.parameters(), external_model.parameters()
+    ):
+        assert torch.equal(class_param.grad, external_param.grad)
+
+
 def test_subclass_can_add_to_training_loss_terms():
     x1 = torch.randn(4, 3)
     x0 = torch.randn_like(x1)
@@ -146,6 +223,34 @@ def test_prepare_flow_matching_preserves_rng_order():
     assert torch.equal(batch.xt, expected_xt)
     assert torch.equal(batch.target, expected_target)
     assert torch.equal(batch.t, expected_t)
+    assert torch.equal(actual_generator.get_state(), expected_generator.get_state())
+
+
+def test_prepare_equilibrium_matching_preserves_flow_rng_order():
+    x1 = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+    expected_generator = torch.Generator().manual_seed(29)
+    actual_generator = torch.Generator().manual_seed(29)
+    coupling = RandomPermutationCoupling()
+    interpolant = get_interpolant("linear")
+
+    flow_batch = prepare_flow_matching(
+        x1,
+        interpolant=interpolant,
+        coupling=coupling,
+        generator=expected_generator,
+        negate_velocity=True,
+    )
+    equilibrium_batch = prepare_equilibrium_matching(
+        x1,
+        interpolant=interpolant,
+        coupling=coupling,
+        ct=torch.ones_like,
+        generator=actual_generator,
+    )
+
+    assert torch.equal(equilibrium_batch.xt, flow_batch.xt)
+    assert torch.equal(equilibrium_batch.t, flow_batch.t)
+    assert torch.equal(equilibrium_batch.target, flow_batch.target)
     assert torch.equal(actual_generator.get_state(), expected_generator.get_state())
 
 
@@ -212,6 +317,17 @@ def test_prepare_flow_matching_validates_explicit_shapes():
             coupling=coupling,
             x0=torch.randn_like(x1),
             t=torch.rand(4, 1),
+        )
+
+
+def test_prepare_equilibrium_matching_validates_ct_shape():
+    x1 = torch.randn(4, 3)
+    with pytest.raises(ValueError, match=r"ct\(t\) shape"):
+        prepare_equilibrium_matching(
+            x1,
+            interpolant=get_interpolant("linear"),
+            coupling=WeightedReverseCoupling(),
+            ct=lambda t: t[:, None],
         )
 
 

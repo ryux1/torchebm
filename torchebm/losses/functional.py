@@ -111,6 +111,72 @@ def prepare_flow_matching(
     )
 
 
+def prepare_equilibrium_matching(
+    x1: torch.Tensor,
+    *,
+    interpolant: BaseInterpolant,
+    coupling: BaseCoupling,
+    ct: Callable[[torch.Tensor], torch.Tensor],
+    time_invariant: bool = True,
+    x0: Optional[torch.Tensor] = None,
+    t: Optional[torch.Tensor] = None,
+    generator: Optional[torch.Generator] = None,
+    model_kwargs: Optional[Mapping[str, Any]] = None,
+    t_sampler: Optional[
+        Callable[[int, Optional[torch.Generator]], torch.Tensor]
+    ] = None,
+) -> MatchingBatch:
+    r"""Prepare the implicit equilibrium-matching velocity objective.
+
+    The source, coupling, and time draws follow the flow-matching preparation
+    order. The prediction target is the negated interpolant velocity scaled by
+    ``ct(t)``. A time-invariant field receives a zero clock while ``t`` remains
+    available for target and loss weighting.
+
+    Args:
+        x1: Target samples of shape ``(batch, ...)``.
+        interpolant: Interpolant used to construct ``xt`` and its velocity.
+        coupling: Source-target coupling.
+        ct: Target scale callable mapping ``t`` to shape ``(batch,)``.
+        time_invariant: Whether the model receives a zero clock instead of
+            sampled interpolation time.
+        x0: Optional source samples. Defaults to standard Gaussian noise.
+        t: Optional explicit interpolation times of shape ``(batch,)``.
+        generator: Generator shared by source, coupling, and time draws.
+        model_kwargs: Optional conditioning forwarded to the coupling.
+        t_sampler: Optional configured time sampler called after coupling as
+            ``t_sampler(batch, generator)``.
+
+    Returns:
+        Prepared model input, sampled and model clocks, scaled EqM target, and
+        optional coupling weights.
+    """
+    batch = prepare_flow_matching(
+        x1,
+        interpolant=interpolant,
+        coupling=coupling,
+        x0=x0,
+        t=t,
+        generator=generator,
+        model_kwargs=model_kwargs,
+        t_sampler=t_sampler,
+        negate_velocity=True,
+    )
+    scale = ct(batch.t)
+    if scale.shape != batch.t.shape:
+        raise ValueError(
+            f"ct(t) shape {tuple(scale.shape)} must match t shape {tuple(batch.t.shape)}"
+        )
+    scale = scale.view(batch.t.shape[0], *([1] * (batch.xt.ndim - 1)))
+    return MatchingBatch(
+        xt=batch.xt,
+        t=batch.t,
+        model_time=torch.zeros_like(batch.t) if time_invariant else batch.t,
+        target=batch.target * scale,
+        weights=batch.weights,
+    )
+
+
 def weighted_mse_loss(
     prediction: torch.Tensor,
     target: torch.Tensor,
@@ -156,4 +222,9 @@ def weighted_mse_loss(
     return loss.mean()
 
 
-__all__ = ["MatchingBatch", "prepare_flow_matching", "weighted_mse_loss"]
+__all__ = [
+    "MatchingBatch",
+    "prepare_equilibrium_matching",
+    "prepare_flow_matching",
+    "weighted_mse_loss",
+]

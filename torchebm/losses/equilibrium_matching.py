@@ -4,7 +4,7 @@ Implements time-invariant equilibrium training objectives for learning energy
 landscapes, following the EqM paper:
 
 - **Implicit EqM** ($L_{EqM}$): Learns gradient field directly
-  
+
     \[
     L_{EqM} = \|f(x_\gamma) - (\epsilon - x) \cdot c(\gamma)\|^2
     \]
@@ -31,11 +31,12 @@ The field-sign and clock conventions of both losses are tabulated in
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Literal, Optional, Any, Union
+from typing import Any, Callable, Dict, Literal, Optional, Union
 
 import torch
 from torch import nn
 
+from torchebm._deprecation import declare_deprecation
 from torchebm.core import (
     BaseCoupling,
     BaseInterpolant,
@@ -43,12 +44,12 @@ from torchebm.core import (
     expand_t_like_x,
 )
 from torchebm.core.base_loss import BaseInterpolantLoss, _has_dtensor_params
-from torchebm._deprecation import declare_deprecation
 from torchebm.losses import (
-    mean_flat,
     compute_eqm_ct,
     dispersive_loss,
+    mean_flat,
 )
+from torchebm.losses.functional import prepare_equilibrium_matching
 
 _MODEL_TIME_DEPRECATION = declare_deprecation(
     module=__name__,
@@ -287,7 +288,9 @@ class EquilibriumMatchingLoss(BaseInterpolantLoss):
             energy = (xt * model_output).sum(dim=self._reduce_dims(xt.ndim))
         elif self.energy_type == "l2":
             # g(x) = -0.5 ||f(x)||^2
-            energy = -0.5 * model_output.square().sum(dim=self._reduce_dims(model_output.ndim))
+            energy = -0.5 * model_output.square().sum(
+                dim=self._reduce_dims(model_output.ndim)
+            )
         else:
             raise ValueError(f"Unknown energy type: {self.energy_type}")
 
@@ -340,7 +343,12 @@ class EquilibriumMatchingLoss(BaseInterpolantLoss):
 
         with self.autocast_context():
             loss = self.compute_loss(
-                x, *args, x0=x0, model_kwargs=model_kwargs, generator=generator, **kwargs
+                x,
+                *args,
+                x0=x0,
+                model_kwargs=model_kwargs,
+                generator=generator,
+                **kwargs,
             )
 
         return loss
@@ -389,41 +397,51 @@ class EquilibriumMatchingLoss(BaseInterpolantLoss):
             )
 
         x1 = x1.to(device=self.device, dtype=self.dtype)
-        batch = x1.shape[0]
-
-        if x0 is None:
-            x0 = torch.randn_like(x1, generator=generator)
+        if self.prediction == "velocity" and self.energy_type == "none":
+            prepared = prepare_equilibrium_matching(
+                x1,
+                interpolant=self.interpolant,
+                coupling=self.coupling,
+                ct=self._compute_ct,
+                time_invariant=self.time_invariant,
+                x0=x0,
+                generator=generator,
+                model_kwargs=model_kwargs,
+                t_sampler=self._sample_t,
+            )
+            xt = prepared.xt
+            t = prepared.t
+            target = prepared.target
+            model_time = prepared.model_time
+            coupling_weights = prepared.weights
         else:
-            x0 = x0.to(device=self.device, dtype=self.dtype)
-            if x0.shape != x1.shape:
-                raise ValueError(
-                    f"x0 shape {tuple(x0.shape)} must match x1 shape {tuple(x1.shape)}"
-                )
+            batch = x1.shape[0]
+            if x0 is None:
+                x0 = torch.randn_like(x1, generator=generator)
+            else:
+                x0 = x0.to(device=self.device, dtype=self.dtype)
+                if x0.shape != x1.shape:
+                    raise ValueError(
+                        f"x0 shape {tuple(x0.shape)} must match x1 shape "
+                        f"{tuple(x1.shape)}"
+                    )
 
-        coupled = self.coupling(x0, x1, generator=generator, **model_kwargs)
-        x0, x1 = coupled
-
-        t = self._sample_t(batch, generator)
-
-        # Interpolate: xt between x0 (noise) and x1 (data)
-        xt, ut = self.interpolant.interpolate(x0, x1, t)
-
-        # EqM target: -ut * c(t) where ut = d_alpha*x1 + d_sigma*x0
-        # For linear interpolant, -ut = x0 - x1 (equivalent to original formulation).
-        # For VP/cosine, ut encodes the schedule-specific velocity coefficients.
-        # Sampling with negate_velocity=True recovers the positive velocity ut*c(t).
-        ct = self._compute_ct(t)
-        ct = ct.view(batch, *([1] * (xt.ndim - 1)))
-        target = -ut * ct
+            coupled = self.coupling(x0, x1, generator=generator, **model_kwargs)
+            x0, x1 = coupled
+            t = self._sample_t(batch, generator)
+            xt, ut = self.interpolant.interpolate(x0, x1, t)
+            ct = self._compute_ct(t)
+            ct = ct.view(batch, *([1] * (xt.ndim - 1)))
+            target = -ut * ct
+            model_time = torch.zeros_like(t) if self.time_invariant else t
+            coupling_weights = coupled.weights
 
         # For explicit energy, we need gradients w.r.t. xt
         if self.energy_type != "none":
             xt = xt.detach().requires_grad_(True)
 
-        t_model = torch.zeros_like(t) if self.time_invariant else t
-
         with self.autocast_context():
-            model_output = self.model(xt, t_model, **model_kwargs)
+            model_output = self.model(xt, model_time, **model_kwargs)
 
         if isinstance(model_output, tuple):
             model_output, act = model_output
@@ -438,7 +456,7 @@ class EquilibriumMatchingLoss(BaseInterpolantLoss):
             else:
                 disp_loss = dispersive_loss(act)
 
-        terms = {"pred": model_output, "weights": coupled.weights}
+        terms = {"pred": model_output, "weights": coupling_weights}
 
         # Compute loss based on prediction type
         if self.prediction == "velocity":
@@ -468,7 +486,9 @@ class EquilibriumMatchingLoss(BaseInterpolantLoss):
             if self.prediction == "noise":
                 terms["loss"] = mean_flat(weight * (model_output - x0).square())
             elif self.prediction == "score":
-                terms["loss"] = mean_flat(weight * (model_output * sigma_t + x0).square())
+                terms["loss"] = mean_flat(
+                    weight * (model_output * sigma_t + x0).square()
+                )
             else:
                 raise ValueError(f"Unknown prediction type: {self.prediction}")
 
