@@ -144,7 +144,12 @@ class FlowMatchingLoss(BaseInterpolantLoss):
 
         with self.autocast_context():
             loss = self.compute_loss(
-                x, *args, x0=x0, model_kwargs=model_kwargs, generator=generator, **kwargs
+                x,
+                *args,
+                x0=x0,
+                model_kwargs=model_kwargs,
+                generator=generator,
+                **kwargs,
             )
         return loss
 
@@ -166,8 +171,10 @@ class FlowMatchingLoss(BaseInterpolantLoss):
                 sampling; the global RNG when ``None``.
 
         Returns:
-            Dictionary with 'loss' (per-sample), 'pred', and 'weights'
-            (per-pair coupling weights or None).
+            Dictionary containing ``loss`` (per-sample weighted MSE), ``pred``
+            (model prediction), ``target`` (interpolant velocity, optionally
+            negated), ``weights`` (per-pair coupling weights or ``None``), and
+            ``loss_weights`` (per-timestep objective weights or ``None``).
         """
         if model_kwargs is None:
             model_kwargs = {}
@@ -180,7 +187,7 @@ class FlowMatchingLoss(BaseInterpolantLoss):
             x0=x0,
             generator=generator,
             model_kwargs=model_kwargs,
-            sample_t=self._sample_t,
+            t_sampler=self._sample_t,
             negate_velocity=self.negate_velocity,
         )
 

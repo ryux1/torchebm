@@ -53,6 +53,15 @@ class TimeField(nn.Module):
         return self.linear(x) + t.unsqueeze(-1)
 
 
+class RegularizedFlowMatchingLoss(FlowMatchingLoss):
+    """Test loss proving subclasses can augment the prepared per-sample loss."""
+
+    def training_losses(self, *args: Any, **kwargs: Any):
+        terms = super().training_losses(*args, **kwargs)
+        terms["loss"] = terms["loss"] + 1.0
+        return terms
+
+
 def _fixed_t(t: torch.Tensor):
     return lambda batch, *, device, dtype, generator: t.to(device=device, dtype=dtype)
 
@@ -97,6 +106,20 @@ def test_external_flow_evaluation_matches_class_value_and_gradients():
         model.parameters(), external_model.parameters()
     ):
         assert torch.equal(class_param.grad, external_param.grad)
+
+
+def test_subclass_can_add_to_training_loss_terms():
+    x1 = torch.randn(4, 3)
+    x0 = torch.randn_like(x1)
+    t = torch.tensor([0.1, 0.3, 0.6, 0.9])
+    model = TimeField(dim=3)
+
+    base_loss = FlowMatchingLoss(model=model, t_sampler=_fixed_t(t))(x1, x0=x0)
+    regularized_loss = RegularizedFlowMatchingLoss(model=model, t_sampler=_fixed_t(t))(
+        x1, x0=x0
+    )
+
+    assert torch.equal(regularized_loss, base_loss + 1.0)
 
 
 def test_prepare_flow_matching_preserves_rng_order():

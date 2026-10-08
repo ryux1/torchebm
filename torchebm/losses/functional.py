@@ -41,14 +41,16 @@ def prepare_flow_matching(
     t: Optional[torch.Tensor] = None,
     generator: Optional[torch.Generator] = None,
     model_kwargs: Optional[Mapping[str, Any]] = None,
-    sample_t: Optional[Callable[[int, Optional[torch.Generator]], torch.Tensor]] = None,
+    t_sampler: Optional[
+        Callable[[int, Optional[torch.Generator]], torch.Tensor]
+    ] = None,
     negate_velocity: bool = False,
 ) -> MatchingBatch:
     r"""Prepare a conditional flow-matching batch without evaluating a model.
 
     Random draws retain the class API's order: source noise first, stochastic
     coupling second, and interpolation time last. Passing ``x0`` or ``t``
-    skips the corresponding draw. When ``t`` is omitted, ``sample_t`` is used
+    skips the corresponding draw. When ``t`` is omitted, ``t_sampler`` is used
     if provided; otherwise time is sampled uniformly on ``[0, 1)``.
 
     Args:
@@ -59,7 +61,9 @@ def prepare_flow_matching(
         t: Optional explicit interpolation times of shape ``(batch,)``.
         generator: Generator shared by source, coupling, and time draws.
         model_kwargs: Optional conditioning forwarded to the coupling.
-        sample_t: Optional configured time sampler called after coupling.
+        t_sampler: Optional configured time sampler called after coupling as
+            ``t_sampler(batch, generator)``. When omitted, times are drawn
+            uniformly on ``[0, 1)``.
         negate_velocity: Use ``-ut`` rather than ``ut`` as the target.
 
     Returns:
@@ -81,7 +85,7 @@ def prepare_flow_matching(
     x0, x1 = coupled
 
     if t is None:
-        if sample_t is None:
+        if t_sampler is None:
             t = torch.rand(
                 batch,
                 device=x1.device,
@@ -89,7 +93,7 @@ def prepare_flow_matching(
                 generator=generator,
             )
         else:
-            t = sample_t(batch, generator)
+            t = t_sampler(batch, generator)
     else:
         t = t.to(device=x1.device, dtype=x1.dtype)
 
@@ -120,6 +124,24 @@ def weighted_mse_loss(
     ``loss_weights`` multiply individual per-sample losses. ``weights`` are
     coupling masses and therefore also define the denominator of the weighted
     mean, matching the class API's existing reduction.
+
+    Args:
+        prediction: Model prediction with a leading batch dimension.
+        target: Prediction target, with the same shape as ``prediction``.
+        weights: Optional per-sample coupling masses. These affect both the
+            numerator and denominator when ``reduction="mean"``.
+        loss_weights: Optional per-sample objective multipliers. These affect
+            the numerator only.
+        reduction: ``"none"`` returns the per-sample losses after applying
+            ``loss_weights``; ``"mean"`` returns their plain or
+            coupling-weighted mean.
+
+    Returns:
+        A per-sample tensor for ``reduction="none"`` or a scalar mean for
+        ``reduction="mean"``.
+
+    Raises:
+        ValueError: If ``reduction`` is not ``"none"`` or ``"mean"``.
     """
     loss = mean_flat((prediction - target).square())
     if loss_weights is not None:
