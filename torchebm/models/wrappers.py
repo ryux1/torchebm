@@ -9,7 +9,7 @@ from torchebm.core import BaseModel, BaseScheduler, Schedulable
 from torchebm.core.base_module import substitute_condition
 
 
-class FixedTime(nn.Module):
+class FixedTime(BaseModel):
     r"""Evaluate a time-conditioned model at one fixed clock value.
 
     The caller's timestep is deliberately ignored. This is useful when a
@@ -23,23 +23,23 @@ class FixedTime(nn.Module):
 
     def __init__(self, model: nn.Module, t: Union[int, float, torch.Tensor]):
         super().__init__()
-        fixed = torch.as_tensor(t)
-        if fixed.numel() != 1:
-            raise ValueError(f"t must be a scalar, got shape {tuple(fixed.shape)}")
+        if isinstance(t, torch.Tensor):
+            if t.numel() != 1:
+                raise ValueError(f"t must be a scalar, got shape {tuple(t.shape)}")
+            t = t.item()
         self.model = model
-        self.register_buffer("fixed_t", fixed.reshape(()), persistent=False)
+        self.t = float(t)
 
     def forward(
         self, x: torch.Tensor, t: Optional[torch.Tensor] = None, **kwargs
     ) -> torch.Tensor:
-        dtype = t.dtype if t is not None and t.is_floating_point() else x.dtype
-        fixed_t = self.fixed_t.to(device=x.device, dtype=dtype).expand(x.shape[0])
+        fixed_t = torch.full((x.shape[0],), self.t, device=x.device, dtype=x.dtype)
         return self.model(x, fixed_t, **kwargs)
 
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}(model={type(self.model).__name__}, "
-            f"t={self.fixed_t.item()!r})"
+            f"t={self.t!r})"
         )
 
 

@@ -19,6 +19,11 @@ class _TimeRecorder(nn.Module):
         return x * self.weight * scale + t[:, None]
 
 
+class _TimeConditionedEnergy(nn.Module):
+    def forward(self, x, t):
+        return (x.square() + t[:, None]).sum(dim=1)
+
+
 def test_fixed_time_ignores_caller_clock_and_forwards_kwargs():
     model = _TimeRecorder().double()
     wrapped = FixedTime(model, 0.25)
@@ -29,6 +34,26 @@ def test_fixed_time_ignores_caller_clock_and_forwards_kwargs():
     assert torch.equal(model.seen_t, torch.full((3,), 0.25, dtype=torch.float64))
     assert torch.equal(out, torch.full_like(x, 6.25))
     assert wrapped.model is model
+
+
+def test_fixed_time_stores_clock_as_python_float_without_rounding_to_float32():
+    wrapped = FixedTime(_TimeRecorder().double(), 0.1)
+    x = torch.ones(2, 1, dtype=torch.float64)
+
+    wrapped(x)
+
+    assert isinstance(wrapped.t, float)
+    assert torch.equal(
+        wrapped.model.seen_t,
+        torch.full((2,), 0.1, dtype=torch.float64),
+    )
+
+
+def test_fixed_time_inherits_base_model_gradient():
+    wrapped = FixedTime(_TimeConditionedEnergy(), 0.25)
+    x = torch.tensor([[1.0, -2.0], [3.0, 0.5]])
+
+    assert torch.equal(wrapped.gradient(x), 2 * x)
 
 
 def test_fixed_time_builds_batch_clock_when_caller_omits_it():
